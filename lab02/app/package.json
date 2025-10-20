@@ -1,0 +1,14 @@
+{
+  "name": "lab02-express-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "lint": "echo \"(placeholder lint)\"",
+    "test": "node -e \"process.exit(0)\""
+  },
+  "dependencies": {
+    "express": "4.19.2"
+  }
+}
