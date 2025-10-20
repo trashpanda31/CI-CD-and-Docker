@@ -1,0 +1,93 @@
+name: lab03_CI_pipe
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [ master ]
+    paths:
+      - 'lab03/**'
+
+env:
+  IMAGE_TAG: lab03:ci
+  APP_DIR: lab03/app
+
+concurrency:
+  group: lab03-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: hadolint (Dockerfile)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: lab03/Dockerfile
+
+      - name: Setup Python
+        if: ${{ hashFiles('lab03/**/*.py') != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Ruff lint (Python)
+        if: ${{ hashFiles('lab03/**/*.py') != '' }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+          ruff check lab03
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./lab03
+          tags: ${{ env.IMAGE_TAG }}
+          push: false
+          load: true
+
+      - name: Save image as artifact
+        run: docker save ${{ env.IMAGE_TAG }} -o lab03-image.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab03-image
+          path: lab03-image.tar
+          retention-days: 3
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: lab03-image
+          path: .
+      - name: Load image
+        run: docker load -i lab03-image.tar
+
+      - name: Smoke test /health
+        run: |
+          set -eux
+          CID=$(docker run -d --rm -p 8082:8000 ${{ env.IMAGE_TAG }})
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8082/health | grep -q '"ok"'; then ok=1; break; fi
+            sleep 1
+          done
+          test "${ok:-0}" = "1"
+          docker stop "$CID"
+
+      - name: Run pytest inside container (if tests exist)
+        if: ${{ hashFiles('lab03/app/tests/**') != '' }}
+        run: docker run --rm ${{ env.IMAGE_TAG }} python -m pytest -q
