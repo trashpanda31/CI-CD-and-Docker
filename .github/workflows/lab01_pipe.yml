@@ -1,0 +1,75 @@
+name: lab01_pipe
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [ master ]
+    paths:
+      - 'lab01/**'
+      
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true  
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: lab01/Dockerfile
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: [lint] 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./lab01
+          tags: lab01:ci
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Save image as artifact
+        run: docker save lab01:ci -o lab01-image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab01-image
+          path: lab01-image.tar
+          retention-days: 3
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: [build] 
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: lab01-image
+          path: .
+      - name: Load image
+        run: docker load -i lab01-image.tar
+      - name: Run smoke test
+        run: |
+          set -eux
+          CID=$(docker run -d --rm -p 8080:80 lab01:ci)
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/ | grep -qi 'it works'; then ok=1; break; fi
+            sleep 1
+          done
+          test "${ok:-0}" = "1"
+          docker stop "$CID"
