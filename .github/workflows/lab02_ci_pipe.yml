@@ -1,0 +1,99 @@
+name: lab02_ci_pipe
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [ master ]
+    paths:
+      - 'lab02/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab02-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_DIR: lab02/app
+  IMAGE_TAG: lab02:ci
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Hadolint (Dockerfile)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: lab02/Dockerfile
+        
+      - name: npm ci
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Lint
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run lint
+
+      - name: Test
+        working-directory: ${{ env.APP_DIR }}
+        run: npm test
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build
+        uses: docker/build-push-action@v6
+        with: 
+          context: ./lab02
+          push: false
+          tags: ${{ env.IMAGE_TAG }}
+          load: true 
+
+      - name: Save image as artifact
+        run: docker save ${{ env.IMAGE_TAG }} -o lab02-image.tar
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab02-image
+          path: lab02-image.tar
+          retention-days: 3
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with: 
+          name: lab02-image
+          path: .
+
+      - name: load-image
+        run: docker load -i lab02-image.tar
+
+      - name: Run & probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          CID=$(docker run -d --rm -p 8081:3000 ${{ env.IMAGE_TAG }})
+          trap "docker stop $CID >/dev/null 2>&1 || true" EXIT
+
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8081/health | grep -q '"ok"'; then
+              echo "Smoke OK"; exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Smoke FAILED"
+          docker logs "$CID" || true
+          exit 1
