@@ -1,0 +1,101 @@
+name: Publish labs to Docker Hub (auto)
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'lab*/**'
+      - '.github/workflows/publish.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect changed labs
+    runs-on: ubuntu-latest
+    outputs:
+      labs: ${{ steps.collect.outputs.labs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Changed files under lab*/
+        id: changes
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            lab*/**
+
+      - name: Collect build targets (universal)
+        id: collect
+        uses: actions/github-script@v7
+        env:
+          ALL_CHANGED: ${{ steps.changes.outputs.all_changed_files }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const changed = (process.env.ALL_CHANGED || '').split('\n').filter(Boolean);
+            const labsTouched = new Set(changed.map(f => (f.match(/^(lab[^/]+)/) || [])[1]).filter(Boolean));
+            const targets = new Set();
+            const walkFindDockerfiles = (base, depth = 0) => {
+              if (!fs.existsSync(base) || depth > 3) return;
+              for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
+                const full = path.join(base, entry.name);
+                if (entry.isFile() && entry.name === 'Dockerfile') {
+                  targets.add(path.dirname(full));
+                } else if (entry.isDirectory()) {
+                  walkFindDockerfiles(full, depth + 1);
+                }
+              }
+            };
+            for (const lab of labsTouched) {
+              if (fs.existsSync(`${lab}/Dockerfile`)) targets.add(lab);
+              const subdirs = ['src', 'server', 'client', 'backend', 'frontend'];
+              for (const sub of subdirs) {
+                const base = `${lab}/${sub}`;
+                if (fs.existsSync(base)) walkFindDockerfiles(base);
+              }
+            }
+            const arr = [...targets];
+            core.info(`Build targets detected: ${JSON.stringify(arr)}`);
+            core.setOutput('labs', JSON.stringify(arr));
+            
+  publish:
+    name: Build & Push images
+    needs: detect
+    if: ${{ needs.detect.outputs.labs != '[]' && needs.detect.outputs.labs != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: ${{ fromJson(needs.detect.outputs.labs) }}
+      max-parallel: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: sanitize
+        run: |
+          SANITIZED="${{ matrix.target }}"
+          SANITIZED="${SANITIZED//\//-}"
+          echo "tag=${SANITIZED}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.target }}
+          file: ./${{ matrix.target }}/Dockerfile
+          push: true
+          tags: |
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.sanitize.outputs.tag }}:latest
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.sanitize.outputs.tag }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
