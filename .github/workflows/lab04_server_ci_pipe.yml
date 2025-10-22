@@ -1,0 +1,85 @@
+name: lab04 Server CI
+
+on:
+  pull_request: 
+    branches: [master]
+    paths:
+      - 'lab04/src/server/**'
+
+env:
+  IMAGE_NAME: lab04-server
+  CONTEXT_PATH: lab04/src/server
+  PORT: 4000
+
+concurrency: 
+  group: lab04-server-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ env.CONTEXT_PATH }}/Dockerfile
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT_PATH }}
+          file: ${{ env.CONTEXT_PATH }}/Dockerfile
+          tags: ${{ env.IMAGE_NAME }}:ci
+          push: false
+          load: true
+
+      - name: Save image as artifact
+        run: docker save ${{ env.IMAGE_NAME }}:ci -o ${{ env.IMAGE_NAME }}.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-image
+          path: ${{ env.IMAGE_NAME }}.tar
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lab04-server-image
+          path: .
+
+      - name: Load Docker image
+        run: docker load -i lab04-server.tar
+
+      - name: Run container and test
+        run: |
+          docker run -d --rm -e PORT=${{ env.PORT }} -p ${{ env.PORT }}:${{ env.PORT }} \
+            --name lab04-server lab04-server:ci
+          echo "waiting for container..."
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:${{ env.PORT }}/api/users | grep -q "users"; then
+              echo "✅ backend ok"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ backend failed" >&2
+          exit 1
