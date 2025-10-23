@@ -1,0 +1,128 @@
+name: Backend CI
+
+on:
+  pull_request: 
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [master]
+    paths:
+      - 'lab05/backend/**'
+  workflow_dispatch: {}
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+env: 
+  CONTEXT_PATH: lab05/backend
+  IMAGE_NAME: lab05-backend
+  PORT: 5000
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ env.CONTEXT_PATH }}/Dockerfile
+  
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT_PATH }}
+          file: ${{ env.CONTEXT_PATH }}/Dockerfile
+          tags: ${{ env.IMAGE_NAME }}:ci
+          push: false
+          load: true
+
+      - name: Save image as artifact
+        run: docker save ${{ env.IMAGE_NAME }}:ci -o ${{ env.IMAGE_NAME }}.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-image
+          path: ${{ env.IMAGE_NAME }}.tar
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: build
+    env:
+      DB_USER: app
+      DB_PASS: app
+      DB_NAME: appdb
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-image
+          path: .
+
+      - name: Load Docker image
+        run: docker load -i ${{ env.IMAGE_NAME }}.tar
+
+      - name: Create test network
+        run: docker network create ci-net
+
+      - name: Start Postgres
+        run: |
+          docker run -d --name db --network ci-net \
+            -e POSTGRES_DB=${{ env.DB_NAME }} \
+            -e POSTGRES_USER=${{ env.DB_USER }} \
+            -e POSTGRES_PASSWORD=${{ env.DB_PASS }} \
+            postgres:16-alpine
+          echo "waiting for postgres..."
+          for i in {1..40}; do
+            docker exec db pg_isready -U ${{ env.DB_USER }} -d ${{ env.DB_NAME }} && break
+            sleep 1
+          done
+
+      - name: Run backend
+        run: |
+          docker run -d --rm \
+            --name ${{ env.IMAGE_NAME }} \
+            --network ci-net \
+            -e PORT=${{ env.PORT }} \
+            -e DATABASE_URL=postgresql://${{ env.DB_USER }}:${{ env.DB_PASS }}@db:5432/${{ env.DB_NAME }} \
+            -p ${{ env.PORT }}:${{ env.PORT }} \
+            ${{ env.IMAGE_NAME }}:ci
+          echo "waiting for api..."
+          for i in {1..40}; do
+            curl -fsS http://127.0.0.1:${{ env.PORT }}/api/health && break
+            sleep 1
+          done
+          
+      - name: Run container and test
+        run: |
+          echo "waiting for api..."
+          for i in {1..40}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${{ env.PORT }}/api/health || true)
+            if [ "$code" = "200" ]; then
+              echo "✅ backend health OK (200)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ backend failed (health not 200)" >&2
+          echo "--- backend logs ---"
+          docker logs ${{ env.IMAGE_NAME }} || true
+          exit 1
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f ${{ env.IMAGE_NAME }} 2>/dev/null || true
+          docker rm -f db 2>/dev/null || true
+          docker network rm ci-net 2>/dev/null || true
