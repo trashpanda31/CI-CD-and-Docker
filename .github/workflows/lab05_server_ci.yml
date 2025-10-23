@@ -1,4 +1,4 @@
-name: Backend CI
+name: Lab05 Backend CI
 
 on:
   pull_request: 
