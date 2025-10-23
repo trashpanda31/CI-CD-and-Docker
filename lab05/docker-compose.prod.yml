@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: lab05-db
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [app]
+
+  backend:
+    image: docker.io/trashpanda31/lab05-backend:${TAG:-latest}
+    container_name: lab05-backend
+    environment:
+      DATABASE_URL: postgres://app:app@db:5432/app
+      PORT: "5000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [app]
+
+  frontend:
+    image: docker.io/trashpanda31/lab05-frontend:${TAG:-latest}
+    container_name: lab05-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80" 
+    networks: [app]
+
+volumes:
+  dbdata:
+
+networks:
+  app:
+    driver: bridge
