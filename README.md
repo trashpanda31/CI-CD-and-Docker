@@ -31,12 +31,12 @@ _In short:_
 ### Lab 01 — Nginx static site
 - Focus: minimal containerized static hosting with an HTTP health check.
 - Dockerfile: `lab01/Dockerfile`
-- Pipeline: `.github/workflows/lab01_pipe.yml` — PR: hadolint > buildx build > save artifact > smoke HTTP.
+- Pipeline: `lab01_pipe.yml` — PR: hadolint > buildx build > save artifact > smoke HTTP.
 
 ### Lab 02 — Node/Express (multi-stage, cache)
 - Focus: reproducible multi-stage build with dependency caching.
 - Dockerfile: `lab02/Dockerfile`
-- Pipeline: `.github/workflows/lab02_ci_pipe.yml` — PR: hadolint > npm ci/lint/test > build > save artifact > HTTP probe.
+- Pipeline: `lab02_ci_pipe.yml` — PR: hadolint > npm ci/lint/test > build > save artifact > HTTP probe.
 
 ### Lab 03 — FastAPI service (runtime image)
 - Focus: slim Python runtime and non-root execution.
@@ -48,16 +48,16 @@ _In short:_
 - Docker: `lab04/src/server/Dockerfile`, `lab04/src/client/Dockerfile`, 
 - Compose: `lab04/src/docker-compose.prod.yml`
 - Pipelines:  
-  - Server: `.github/workflows/lab04_server_ci_pipe.yml` — PR: hadolint > build > save artifact > run & probe.  
-  - Client: `.github/workflows/lab04_client_ci_pipe.yml` — PR: hadolint > build > save artifact > run & wait > show rendered nginx config.
+  - Server: `lab04_server_ci_pipe.yml` — PR: hadolint > build > save artifact > run & probe.  
+  - Client: `lab04_client_ci_pipe.yml` — PR: hadolint > build > save artifact > run & wait > show rendered nginx config.
 
 ### Lab 05 — Postgres + API + frontend behind Nginx (dev/prod)
 - Focus: small near-production stack with separate dev/prod Compose.
 - Docker: `lab05/backend/Dockerfile`, `lab05/frontend/Dockerfile`,
 - Compose: `lab05/docker-compose.dev.yml`, `lab05/docker-compose.prod.yml`
 - Pipelines:  
-  - Backend: `.github/workflows/lab05_server_ci.yml` — PR: hadolint > build > save artifact > start temp Postgres > run & probe > cleanup.  
-  - Frontend: `.github/workflows/lab05_client_ci.yml` — PR: hadolint > build > save & upload image artifact.
+  - Backend: `lab05_server_ci.yml` — PR: hadolint > build > save artifact > start temp Postgres > run & probe > cleanup.  
+  - Frontend: `lab05_client_ci.yml` — PR: hadolint > build > save & upload image artifact.
 
 ## 📌 Summary
 
@@ -67,5 +67,6 @@ _In short:_
 - **Workflow hygiene:** A dedicated **pipeline-for-pipelines** validates workflows (YAML/lint, pinned `uses`, safe triggers, minimal `permissions`) so unsafe or sloppy CI doesn’t reach `master`.
 - **Artifacts over flakes:** Built images are saved as CI artifacts for repeatable smoke tests and quick triage without re-building.
 - **Operational clarity:** Simple, predictable tagging and a clear promotion path (PR checks > main > registry) make it obvious what’s running and where it came from.
+
 
 
