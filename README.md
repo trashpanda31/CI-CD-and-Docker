@@ -68,5 +68,6 @@ _In short:_
 - **Artifacts over flakes:** Built images are saved as CI artifacts for repeatable smoke tests and quick triage without re-building.
 - **Operational clarity:** Simple, predictable tagging and a clear promotion path (PR checks > main > registry) make it obvious what’s running and where it came from.
 
+![CI/CD Scheme](https://i.imgur.com/DVubCef.png)
 
 
